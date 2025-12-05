@@ -1,22 +1,14 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use jsonwebtoken::errors::ErrorKind;
-use jsonwebtoken::Header;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, OneOrMany};
+use crate::{
+    error::{AuthError, DecodeHeaderSnafu, DecodeSnafu},
+    instance::KeycloakAuthInstance,
+    role::{ExpectRoles, ExtractRoles, KeycloakRole, NumRoles, Role},
+};
+use jsonwebtoken::{Header, errors::ErrorKind};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_with::{OneOrMany, serde_as};
 use snafu::ResultExt;
+use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
-
-use crate::error::DecodeHeaderSnafu;
-use crate::error::DecodeSnafu;
-use crate::instance::KeycloakAuthInstance;
-use crate::role::ExpectRoles;
-use crate::role::KeycloakRole;
-use crate::role::NumRoles;
-
-use super::{error::AuthError, role::ExtractRoles, role::Role};
 
 pub type RawClaims = HashMap<String, serde_json::Value>;
 
@@ -62,8 +54,6 @@ pub(crate) async fn decode_and_validate(
     raw_token: RawToken<'_>,
     expected_audiences: &[String],
 ) -> Result<RawClaims, AuthError> {
-    let header = raw_token.decode_header()?;
-
     async fn try_decode(
         kc_instance: &KeycloakAuthInstance,
         header: &Header,
@@ -73,6 +63,7 @@ pub(crate) async fn decode_and_validate(
         let decoding_keys = kc_instance.decoding_keys().await;
         raw_token.decode_and_validate(header, expected_audiences, decoding_keys.iter())
     }
+    let header = raw_token.decode_header()?;
 
     // First decode. This may fail if known decoding keys are out of date (for example if the Keycloak server changed).
     let mut raw_claims = try_decode(kc_instance, &header, &raw_token, expected_audiences).await;
@@ -88,14 +79,14 @@ pub(crate) async fn decode_and_validate(
             AuthError::NoDecodingKeys => true,
             AuthError::Decode { source } => match source.kind() {
                 // While rare, if this occurs, a valid key can be retrieved from Keycloak.
-                ErrorKind::InvalidRsaKey(_) => true,
                 // Added for completeness, though its relevance is uncertain.
-                ErrorKind::InvalidEcdsaKey => true,
                 // May occur after a private key change in Keycloak.
                 // However, such changes are infrequent, and without rate limiting,
                 // this can lead to excessive requests to the Keycloak server
                 // through our Axum backend.
-                ErrorKind::RsaFailedSigning => true,
+                ErrorKind::InvalidRsaKey(_)
+                | ErrorKind::InvalidEcdsaKey
+                | ErrorKind::RsaFailedSigning => true,
                 _ => false,
             },
             _ => false,
@@ -114,7 +105,7 @@ pub(crate) async fn decode_and_validate(
 pub(crate) async fn parse_raw_claims<R, Extra>(
     raw_claims: RawClaims,
     persist_raw_claims: bool,
-    required_roles: &[R],
+    required_roles: &[KeycloakRole<R>],
 ) -> Result<
     (
         Option<HashMap<String, serde_json::Value>>,
@@ -124,13 +115,14 @@ pub(crate) async fn parse_raw_claims<R, Extra>(
 >
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send,
 {
-    let raw_claims_clone = match persist_raw_claims {
-        true => Some(raw_claims.clone()),
-        false => None,
+    let raw_claims_clone = if persist_raw_claims {
+        Some(raw_claims.clone())
+    } else {
+        None
     };
-    let value = serde_json::Value::from_iter(raw_claims.into_iter());
+    let value = raw_claims.into_iter().collect::<serde_json::Value>();
 
     let standard_claims = serde_json::from_value(value).map_err(|err| AuthError::JsonParse {
         source: Arc::new(err),
@@ -253,11 +245,11 @@ impl<R: Role> ExtractRoles<R> for ResourceAccess {
 ///     ).into_response()
 /// }
 /// ```
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct KeycloakToken<R, Extra = ProfileAndEmail>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send,
 {
     /// Expiration time (UTC).
     pub expires_at: time::OffsetDateTime,
@@ -283,7 +275,7 @@ where
 impl<R, Extra> KeycloakToken<R, Extra>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send,
 {
     pub(crate) fn parse(raw: StandardClaims<Extra>) -> Result<Self, AuthError> {
         Ok(Self {
@@ -320,9 +312,10 @@ where
     }
 
     pub fn assert_not_expired(&self) -> Result<(), AuthError> {
-        match self.is_expired() {
-            true => Err(AuthError::TokenExpired),
-            false => Ok(()),
+        if self.is_expired() {
+            Err(AuthError::TokenExpired)
+        } else {
+            Ok(())
         }
     }
 }
@@ -330,26 +323,33 @@ where
 impl<R, Extra> ExpectRoles<R> for KeycloakToken<R, Extra>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send,
 {
     type Rejection = AuthError;
 
-    fn expect_roles<I: Into<R> + Clone>(&self, roles: &[I]) -> Result<(), Self::Rejection> {
+    fn expect_roles(&self, roles: &[KeycloakRole<R>]) -> Result<(), Self::Rejection> {
         for expected in roles {
-            let expected: R = expected.clone().into();
-            if !self.roles.iter().any(|role| role.role() == &expected) {
+            // let expected: R = expected.clone().into();
+            if !self.roles.iter().any(|role| role.role() == expected.role()) {
                 return Err(AuthError::MissingExpectedRole {
-                    role: expected.to_string(),
+                    role: match expected {
+                        KeycloakRole::Realm { role } => KeycloakRole::Realm {
+                            role: role.to_string(),
+                        },
+                        KeycloakRole::Client { role, client } => KeycloakRole::Client {
+                            role: role.to_string(),
+                            client: client.clone(),
+                        },
+                    },
                 });
             }
         }
         Ok(())
     }
 
-    fn not_expect_roles<I: Into<R> + Clone>(&self, roles: &[I]) -> Result<(), Self::Rejection> {
+    fn not_expect_roles(&self, roles: &[KeycloakRole<R>]) -> Result<(), Self::Rejection> {
         for expected in roles {
-            let expected: R = expected.clone().into();
-            if let Some(_role) = self.roles.iter().find(|role| role.role() == &expected) {
+            if self.roles.iter().any(|role| role.role() == expected.role()) {
                 return Err(AuthError::UnexpectedRole);
             }
         }

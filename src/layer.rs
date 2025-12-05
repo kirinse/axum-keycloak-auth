@@ -1,3 +1,14 @@
+use super::PassthroughMode;
+use crate::decode::{
+    KeycloakToken, ProfileAndEmail, RawToken, decode_and_validate, parse_raw_claims,
+};
+use crate::error::AuthError;
+use crate::extract::TokenExtractor;
+use crate::{
+    instance::KeycloakAuthInstance,
+    role::{KeycloakRole, Role},
+    service::KeycloakAuthService,
+};
 use nonempty::NonEmpty;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
@@ -6,25 +17,16 @@ use std::{fmt::Debug, sync::Arc};
 use tower::Layer;
 use typed_builder::TypedBuilder;
 
-use crate::decode::{
-    decode_and_validate, parse_raw_claims, KeycloakToken, ProfileAndEmail, RawToken,
-};
-use crate::error::AuthError;
-use crate::extract::TokenExtractor;
-use crate::{instance::KeycloakAuthInstance, role::Role, service::KeycloakAuthService};
-
-use super::PassthroughMode;
-
-extern crate alloc;
-
 /// Add this layer to a router to protect the contained route handlers.
+///
 /// Authentication happens by looking for the `Authorization` header on requests and parsing the contained JWT bearer token.
 /// See the crate level documentation for how this layer can be created and used.
+///
 #[derive(Clone, TypedBuilder)]
 pub struct KeycloakAuthLayer<R, Extra = ProfileAndEmail>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send + Sync,
 {
     #[builder(setter(into))]
     pub instance: Arc<KeycloakAuthInstance>,
@@ -46,7 +48,7 @@ where
     /// If fine-grained role-based access management in required,
     /// leave this empty and perform manual role checks in your route handlers.
     #[builder(default = vec![], setter(into))]
-    pub required_roles: Vec<R>,
+    pub required_roles: Vec<KeycloakRole<R>>,
 
     /// Specifies where the token is expected to be found.
     #[builder(default = nonempty::nonempty![Arc::new(crate::extract::AuthHeaderTokenExtractor {})])]
@@ -62,7 +64,7 @@ where
 impl<R, Extra> KeycloakAuthLayer<R, Extra>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send + Sync,
 {
     /// Allows to validate a raw keycloak token given as &str (without the "Bearer " part when taken from an authorization header).
     /// This method is helpful if you wish to validate a token which does not pass the axum middleware
@@ -92,7 +94,7 @@ where
 impl<R, Extra> Debug for KeycloakAuthLayer<R, Extra>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send + Sync,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KeycloakAuthLayer")
@@ -105,7 +107,7 @@ where
 impl<S, R, Extra> Layer<S> for KeycloakAuthLayer<R, Extra>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send + Sync,
 {
     type Service = KeycloakAuthService<S, R, Extra>;
 
@@ -123,10 +125,11 @@ mod test {
     use url::Url;
 
     use crate::{
+        PassthroughMode,
         extract::{AuthHeaderTokenExtractor, QueryParamTokenExtractor, TokenExtractor},
         instance::{KeycloakAuthInstance, KeycloakConfig},
         layer::KeycloakAuthLayer,
-        PassthroughMode,
+        role::KeycloakRole,
     };
 
     #[tokio::test]
@@ -161,7 +164,9 @@ mod test {
             .passthrough_mode(PassthroughMode::Block)
             .persist_raw_claims(false)
             .expected_audiences(vec![String::from("account")])
-            .required_roles(vec![String::from("administrator")])
+            .required_roles(vec![KeycloakRole::Realm {
+                role: String::from("administrator"),
+            }])
             .token_extractors(NonEmpty::<Arc<dyn TokenExtractor>> {
                 head: Arc::new(AuthHeaderTokenExtractor::default()),
                 tail: vec![

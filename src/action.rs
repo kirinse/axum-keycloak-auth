@@ -1,31 +1,30 @@
+use atomic_time::AtomicOptionInstant;
+use educe::Educe;
+use futures::Future;
 use std::{
     fmt::Debug,
     option::Option,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicUsize},
         Arc,
+        atomic::{AtomicBool, AtomicUsize},
     },
 };
-
-use atomic_time::AtomicOptionInstant;
-use educe::Educe;
-use futures::Future;
 use tokio::{
     sync::Notify,
-    sync::{futures::Notified, RwLock},
+    sync::{RwLock, futures::Notified},
     task::JoinHandle,
 };
 
-pub(crate) trait ActionInput: Debug + Clone + Send + Sync + 'static {}
-pub(crate) trait ActionOutput: Debug + Send + Sync + 'static {}
+pub trait ActionInput: Debug + Clone + Send + Sync + 'static {}
+pub trait ActionOutput: Debug + Send + Sync + 'static {}
 
 impl<T> ActionInput for T where T: Debug + Clone + Send + Sync + 'static {}
 impl<T> ActionOutput for T where T: Debug + Send + Sync + 'static {}
 
 #[derive(Educe)]
 #[educe(Debug)]
-pub(crate) struct Action<I: ActionInput, O: ActionOutput> {
+pub struct Action<I: ActionInput, O: ActionOutput> {
     /// The current argument that was dispatched to the `async` function.
     /// `Some` while we are waiting for it to resolve, `None` if it has resolved.
     input: Arc<RwLock<Option<I>>>,
@@ -35,7 +34,7 @@ pub(crate) struct Action<I: ActionInput, O: ActionOutput> {
     input_send: Arc<AtomicOptionInstant>,
 
     #[educe(Debug(ignore))]
-    #[allow(clippy::complexity)]
+    #[allow(clippy::complexity, clippy::struct_field_names)]
     action_fn: Arc<dyn Fn(&I) -> Pin<Box<dyn Future<Output = O> + Send + Sync>> + Send + Sync>,
 
     /// Might be Some if there still is an ongoing operation.
@@ -91,7 +90,7 @@ impl<I: ActionInput, O: ActionOutput> Action<I, O> {
 
     pub(crate) fn pending_for(&self) -> std::time::Duration {
         let started_at: std::time::Instant = self.input_send().expect("Start time when pending");
-        std::time::Instant::now() - started_at
+        started_at.elapsed()
     }
 
     pub(crate) async fn input(&self) -> tokio::sync::RwLockReadGuard<'_, Option<I>> {

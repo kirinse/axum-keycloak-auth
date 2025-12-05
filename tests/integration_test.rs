@@ -1,18 +1,16 @@
-use std::time::Duration;
-
 use assertr::prelude::*;
 use http::StatusCode;
 use keycloak::{
+    KeycloakAdmin,
     types::{
         ClientRepresentation, CredentialRepresentation, RealmRepresentation, RoleRepresentation,
         RolesRepresentation, UserRepresentation,
     },
-    KeycloakAdmin,
 };
-use reqwest::Client;
-
 use keycloak_container::KeycloakContainer;
+use reqwest::Client;
 use serde::Deserialize;
+use std::time::Duration;
 
 mod backend;
 mod common;

@@ -1,23 +1,21 @@
-use std::{
-    sync::Arc,
-    task::{Context, Poll},
+use crate::{
+    KeycloakAuthStatus, PassthroughMode, error::AuthError, extract, layer::KeycloakAuthLayer,
+    role::Role,
 };
-
 use axum::{body::Body, response::IntoResponse};
 use futures::future::BoxFuture;
 use http::Request;
 use serde::de::DeserializeOwned;
-
-use crate::{
-    error::AuthError, extract, layer::KeycloakAuthLayer, role::Role, KeycloakAuthStatus,
-    PassthroughMode,
+use std::{
+    sync::Arc,
+    task::{Context, Poll},
 };
 
 #[derive(Clone)]
 pub struct KeycloakAuthService<S, R, Extra>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send + Sync,
 {
     inner: S,
     layer: KeycloakAuthLayer<R, Extra>,
@@ -26,7 +24,7 @@ where
 impl<S, R, Extra> KeycloakAuthService<S, R, Extra>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send + Sync,
 {
     pub fn new(inner: S, layer: &KeycloakAuthLayer<R, Extra>) -> Self {
         Self {
@@ -70,8 +68,7 @@ where
 
         match (is_ready, self.inner.poll_ready(cx)) {
             (true, Poll::Ready(t)) => Poll::Ready(t),
-            (false, _) => Poll::Pending,
-            (_, Poll::Pending) => Poll::Pending,
+            (false, _) | (_, Poll::Pending) => Poll::Pending,
         }
     }
 
@@ -107,7 +104,7 @@ where
                                 .extensions_mut()
                                 .insert(KeycloakAuthStatus::<R, Extra>::Success(keycloak_token));
                         }
-                    };
+                    }
                     inner.call(request).await
                 }
                 Err(err) => match passthrough_mode {

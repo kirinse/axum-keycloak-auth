@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Formatter};
 
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
@@ -27,12 +27,19 @@ pub enum KeycloakRole<R: Role> {
         role: R,
     },
 }
+impl<R: Role> Display for KeycloakRole<R> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Realm { role } => f.write_fmt(format_args!("Realm: {role}")),
+            Self::Client { client, role } => f.write_fmt(format_args!("Client({client}): {role}")),
+        }
+    }
+}
 
 impl<R: Role> KeycloakRole<R> {
-    pub fn role(&self) -> &R {
+    pub const fn role(&self) -> &R {
         match self {
-            KeycloakRole::Realm { role } => role,
-            KeycloakRole::Client { client: _, role } => role,
+            Self::Realm { role } | Self::Client { client: _, role } => role,
         }
     }
 }
@@ -43,7 +50,7 @@ pub trait NumRoles {
 
 impl<T: NumRoles> NumRoles for Option<T> {
     fn num_roles(&self) -> usize {
-        self.as_ref().map(|it| it.num_roles()).unwrap_or(0)
+        self.as_ref().map_or(0, NumRoles::num_roles)
     }
 }
 
@@ -56,7 +63,7 @@ pub trait ExtractRoles<R: Role> {
 impl<R: Role, T: ExtractRoles<R>> ExtractRoles<R> for Option<T> {
     fn extract_roles(self, target: &mut Vec<KeycloakRole<R>>) {
         if let Some(inner) = self {
-            inner.extract_roles(target)
+            inner.extract_roles(target);
         }
     }
 }
@@ -78,8 +85,8 @@ where
 pub trait ExpectRoles<R: Role> {
     type Rejection: IntoResponse;
 
-    fn expect_roles<I: Into<R> + Clone>(&self, roles: &[I]) -> Result<(), Self::Rejection>;
-    fn not_expect_roles<I: Into<R> + Clone>(&self, roles: &[I]) -> Result<(), Self::Rejection>;
+    fn expect_roles(&self, roles: &[KeycloakRole<R>]) -> Result<(), Self::Rejection>;
+    fn not_expect_roles(&self, roles: &[KeycloakRole<R>]) -> Result<(), Self::Rejection>;
 }
 
 #[macro_export]

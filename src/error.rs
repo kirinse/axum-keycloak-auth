@@ -1,14 +1,14 @@
 use std::{borrow::Cow, sync::Arc};
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 use snafu::Snafu;
 
-use crate::oidc_discovery;
+use crate::{oidc_discovery, role::KeycloakRole};
 
 #[derive(Debug, Clone, Snafu)]
 #[snafu(visibility(pub(crate)))]
@@ -44,7 +44,9 @@ pub enum AuthError {
 
     /// The 'Authorization' header was present on a request but its value could not be parsed.
     /// This can occur if the header value did not solely contain visible ASCII characters.
-    #[snafu(display("The 'Authorization' header was present on a request but its value could not be parsed. Reason: {reason}"))]
+    #[snafu(display(
+        "The 'Authorization' header was present on a request but its value could not be parsed. Reason: {reason}"
+    ))]
     InvalidAuthorizationHeader { reason: String },
 
     /// The 'Authorization' header was present  and could be parsed, but it did not contain the expected "Bearer {token}" format.
@@ -64,14 +66,16 @@ pub enum AuthError {
     MissingTokenQueryParam,
 
     /// Query parameters were found on the request, and the expected token parameter was found, but it had no value assigned ("?token=").
-    #[snafu(display("Query parameters were found on the request, and the expected token parameter was found, but it had no value assigned (\"?token=\")."))]
+    #[snafu(display(
+        "Query parameters were found on the request, and the expected token parameter was found, but it had no value assigned (\"?token=\")."
+    ))]
     EmptyTokenQueryParam,
 
     /// No JWT could be extracted from the request.
     #[snafu(display("No JWT could be extracted from the request."))]
     MissingToken,
 
-    /// The DecodingKey, required for decoding tokens, could not be created.
+    /// The `DecodingKey`, required for decoding tokens, could not be created.
     #[snafu(display(
         "The DecodingKey, required for decoding tokens, could not be created. Source: {source}"
     ))]
@@ -105,7 +109,7 @@ pub enum AuthError {
 
     /// Note: The `IntoResponse` implementation will only show the provided role in a debug build!
     #[snafu(display("An expected role (omitted for security reasons) was missing."))]
-    MissingExpectedRole { role: String },
+    MissingExpectedRole { role: KeycloakRole<String> },
 
     /// An unexpected role was present.
     #[snafu(display("An unexpected role was present."))]
@@ -115,78 +119,41 @@ pub enum AuthError {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
-            err @ AuthError::NoOidcDiscovery => (
+            err @ (Self::NoOidcDiscovery
+            | Self::OidcDiscovery { source: _ }
+            | Self::NoJwkSetDiscovery
+            | Self::JwkEndpoint { source: _ }
+            | Self::JwkSetDiscovery { source: _ }
+            | Self::CreateDecodingKey { source: _ }
+            | Self::JsonParse { source: _ }) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Cow::Owned(err.to_string()),
             ),
-            err @ AuthError::OidcDiscovery { source: _ } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Cow::Owned(err.to_string()),
-            ),
-            err @ AuthError::NoJwkSetDiscovery => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Cow::Owned(err.to_string()),
-            ),
-            err @ AuthError::JwkEndpoint { source: _ } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Cow::Owned(err.to_string()),
-            ),
-            err @ AuthError::JwkSetDiscovery { source: _ } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Cow::Owned(err.to_string()),
-            ),
-            err @ AuthError::MissingAuthorizationHeader => {
+            err @ (Self::MissingAuthorizationHeader
+            | Self::InvalidAuthorizationHeader { reason: _ }
+            | Self::MissingBearerToken
+            | Self::MissingQueryParams
+            | Self::MissingTokenQueryParam
+            | Self::EmptyTokenQueryParam
+            | Self::MissingToken
+            | Self::NoDecodingKeys
+            | Self::Decode { source: _ }
+            | Self::TokenExpired
+            | Self::InvalidToken { reason: _ }) => {
                 (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
             }
-            err @ AuthError::InvalidAuthorizationHeader { reason: _ } => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            err @ AuthError::MissingBearerToken => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            err @ AuthError::MissingQueryParams => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            err @ AuthError::MissingTokenQueryParam => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            err @ AuthError::EmptyTokenQueryParam => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            err @ AuthError::MissingToken => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            err @ AuthError::CreateDecodingKey { source: _ } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Cow::Owned(err.to_string()),
-            ),
-            err @ AuthError::DecodeHeader { source: _ } => {
+            err @ Self::DecodeHeader { source: _ } => {
                 (StatusCode::BAD_REQUEST, Cow::Owned(err.to_string()))
             }
-            err @ AuthError::NoDecodingKeys => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            err @ AuthError::Decode { source: _ } => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            err @ AuthError::JsonParse { source: _ } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Cow::Owned(err.to_string()),
-            ),
-            err @ AuthError::TokenExpired => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            err @ AuthError::InvalidToken { reason: _ } => {
-                (StatusCode::UNAUTHORIZED, Cow::Owned(err.to_string()))
-            }
-            AuthError::MissingExpectedRole { role } => (
+            Self::MissingExpectedRole { role } => (
                 StatusCode::FORBIDDEN,
-                match cfg!(debug_assertions) {
-                    true => Cow::Owned(format!("Missing expected role: {role}")),
-                    false => Cow::Borrowed("Missing expected role"),
+                if cfg!(debug_assertions) {
+                    Cow::Owned(format!("Missing expected role: {role}"))
+                } else {
+                    Cow::Borrowed("Missing expected role")
                 },
             ),
-            err @ AuthError::UnexpectedRole => (StatusCode::FORBIDDEN, Cow::Owned(err.to_string())),
+            err @ Self::UnexpectedRole => (StatusCode::FORBIDDEN, Cow::Owned(err.to_string())),
         };
         let body = Json(json!({
             "error": error_message,

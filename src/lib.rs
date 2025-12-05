@@ -19,7 +19,7 @@
 //! ```rust
 //! use std::sync::Arc;
 //! use axum::{http::StatusCode, response::{Response, IntoResponse}, routing::get, Extension, Router};
-//! use axum_keycloak_auth::{Url, error::AuthError, instance::KeycloakConfig, instance::KeycloakAuthInstance, layer::KeycloakAuthLayer, decode::KeycloakToken, PassthroughMode, expect_role};
+//! use axum_keycloak_auth::{Url, error::AuthError, instance::KeycloakConfig, instance::KeycloakAuthInstance, layer::KeycloakAuthLayer, decode::KeycloakToken, PassthroughMode, expect_role, role::KeycloakRole};
 //!
 //! pub fn public_router() -> Router {
 //!     Router::new()
@@ -35,7 +35,7 @@
 //!                  .passthrough_mode(PassthroughMode::Block)
 //!                  .persist_raw_claims(false)
 //!                  .expected_audiences(vec![String::from("account")])
-//!                  .required_roles(vec![String::from("administrator")])
+//!                  .required_roles(vec![KeycloakRole::Realm {role:String::from("administrator")}])
 //!                  .build(),
 //!         )
 //! }
@@ -55,7 +55,7 @@
 //!             .passthrough_mode(PassthroughMode::Block)
 //!             .persist_raw_claims(false)
 //!             .expected_audiences(vec![String::from("account")])
-//!             .required_roles(vec![String::from("administrator")])
+//!             .required_roles(vec![KeycloakRole::Realm { role: String::from("administrator") }])
 //!             .build(),
 //!     )
 //! }
@@ -77,7 +77,7 @@
 //! }
 //!
 //! pub async fn protected(Extension(token): Extension<KeycloakToken<String>>) -> Response {
-//!     expect_role!(&token, "administrator");
+//!     expect_role!(&token, KeycloakRole::Realm { role: "administrator".to_string() });
 //!
 //!     tracing::info!("Token payload is {token:#?}");
 //!
@@ -154,10 +154,10 @@
 //! // You could then (remember to update both locations of the generic type) check for roles using your enum:
 //!
 //! use axum::{http::StatusCode, response::{Response, IntoResponse}, Extension};
-//! use axum_keycloak_auth::{decode::KeycloakToken, expect_role};
+//! use axum_keycloak_auth::{decode::KeycloakToken, expect_role, role::KeycloakRole};
 //!
 //! pub async fn protected(Extension(token): Extension<KeycloakToken<Role>>) -> Response {
-//!     expect_role!(&token, Role::Administrator);
+//!     expect_role!(&token, KeycloakRole::Realm {role: Role::Administrator });
 //!     StatusCode::OK.into_response()
 //! }
 //! ```
@@ -215,7 +215,8 @@
 //!
 //! By default, when not explicitly setting `token_extractors`, a single `AuthHeaderTokenExtractor::default()` is used.
 //!
-
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_fields_in_debug)]
 #![forbid(unsafe_code)]
 //#![warn(missing_docs)]
 #![deny(clippy::unwrap_used)]
@@ -261,7 +262,7 @@ pub enum PassthroughMode {
 pub enum KeycloakAuthStatus<R, Extra>
 where
     R: Role,
-    Extra: DeserializeOwned + Clone,
+    Extra: DeserializeOwned + Clone + Send,
 {
     // This variant is fairly large, but probably used most of the time. Leaving this non-boxed results in one less allocation each request.
     Success(decode::KeycloakToken<R, Extra>),
