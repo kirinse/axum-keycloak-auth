@@ -26,10 +26,10 @@ impl KeycloakContainer {
         // This setup is roughly equivalent to the following cli command:
         // `docker run -p 8080:8080 -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:26.2.4 start-dev`
 
-        let keycloak_image = GenericImage::new("quay.io/keycloak/keycloak", "26.2.4")
+        let keycloak_image = GenericImage::new("quay.io/keycloak/keycloak", "26.4.4")
             .with_exposed_port(ContainerPort::Tcp(8080))
             .with_wait_for(WaitFor::message_on_stdout(
-                "Keycloak 26.2.4 on JVM (powered by Quarkus 3.20.0) started",
+                "Keycloak 26.4.4 on JVM (powered by Quarkus 3.27.0) started",
             ))
             .with_wait_for(WaitFor::message_on_stdout(
                 "Listening on: http://0.0.0.0:8080",
@@ -38,7 +38,7 @@ impl KeycloakContainer {
         let container_request = keycloak_image
             .with_env_var("KEYCLOAK_ADMIN", admin_user.as_str())
             .with_env_var("KEYCLOAK_ADMIN_PASSWORD", admin_password.as_str())
-            .with_cmd(["start-dev"]);
+            .with_cmd(["start-dev", "--http-accept-non-normalized-paths=true"]);
 
         let container = container_request.start().await.expect("Keycloak started");
 
@@ -52,7 +52,7 @@ impl KeycloakContainer {
             .await
             .expect("Keycloak to export port 9000");
 
-        let url = Url::parse(format!("http://127.0.0.1:{}", port).as_str()).unwrap();
+        let url = Url::parse(format!("http://127.0.0.1:{port}").as_str()).unwrap();
         tracing::info!(available_at = ?url, "Keycloak started.");
 
         Self {
@@ -66,6 +66,7 @@ impl KeycloakContainer {
     }
 
     pub async fn admin_client(&self) -> KeycloakAdmin {
+        dbg!(&self.url, &self.admin_user, &self.admin_password);
         let client = reqwest::Client::new();
         let admin_token = KeycloakAdminToken::acquire(
             self.url.as_str(),
