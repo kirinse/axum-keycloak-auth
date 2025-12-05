@@ -25,32 +25,32 @@ rustls-tls = ["reqwest/rustls-tls"]
 
 [dependencies]
 atomic-time = "0.1.5"
-axum = "0.8.7"
+axum = "0.8"
 educe = { version = "0.6.0", default-features = false, features = ["Debug"] }
 futures = "0.3.31"
-http = "1.4.0"
+http = "^1"
 jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
 nonempty = { version = "0.12.0", features = ["std"] }
 reqwest = { version = "0.12.24", features = ["json"], default-features = false }
-serde = "1.0.228"
-serde-querystring = "0.3.0"
-serde_json = "1.0.145"
-serde_with = "3.16.1"
+serde = "1.0"
+serde-querystring = "0.3"
+serde_json = "1.0"
+serde_with = "3.9"
 snafu = "0.8.9"
 time = "0.3.44"
 tokio = "1.48.0"
 tower = "0.5.2"
 tracing = "0.1.43"
 try-again = "0.2.2"
-typed-builder = "0.23.2"
-url = "2.5.7"
+typed-builder = "0.21"
+url = "2"
 uuid = { version = "1.19.0", features = ["v7"] }
 
 [dev-dependencies]
-axum = { version = "0.8.7", features = ["macros"] }
+axum = { version = "0.8", features = ["macros"] }
 assertr = "0.4.2"
 keycloak = "26.4.0"
 testcontainers = "0.26.0"
-tower-http = { version = "0.6.7", features = ["trace"] }
+tower-http = { version = "0.6", features = ["trace"] }
 tracing-subscriber = "0.3.22"
 uuid = { version = "1.19.0", features = ["v7", "serde"] }
