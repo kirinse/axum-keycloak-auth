@@ -192,7 +192,9 @@ impl NumRoles for ResourceAccess {
 impl<R: Role> ExtractRoles<R> for RealmAccess {
     fn extract_roles(self, target: &mut Vec<KeycloakRole<R>>) {
         for role in self.0.roles {
-            target.push(KeycloakRole::Realm { role: role.into() });
+            if !role.starts_with("default-roles-") {
+                target.push(KeycloakRole::Realm { role: role.into() });
+            }
         }
     }
 }
