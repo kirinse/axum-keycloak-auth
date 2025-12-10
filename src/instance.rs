@@ -106,7 +106,7 @@ impl KeycloakAuthInstance {
 
             async move {
                 let span = tracing::span!(
-                    tracing::Level::DEBUG,
+                    tracing::Level::TRACE,
                     "perform_oidc_discovery",
                     kc_instance_id = ?id,
                     kc_server,
