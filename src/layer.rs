@@ -111,7 +111,7 @@ where
 {
     type Service = KeycloakAuthService<S, R, Extra>;
 
-    #[tracing::instrument(level="info", skip_all, fields(id = ?self.id))]
+    #[tracing::instrument(level=tracing::Level::DEBUG, skip_all, fields(id = ?self.id))]
     fn layer(&self, inner: S) -> Self::Service {
         KeycloakAuthService::new(inner, self)
     }

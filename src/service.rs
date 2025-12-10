@@ -10,6 +10,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use tracing::{Level, debug, instrument};
 
 #[derive(Clone)]
 pub struct KeycloakAuthService<S, R, Extra>
@@ -72,8 +73,9 @@ where
         }
     }
 
+    #[instrument(skip(self), level=Level::INFO)]
     fn call(&mut self, mut request: Request<Body>) -> Self::Future {
-        tracing::debug!("Validating request...");
+        debug!("Validating request...");
 
         let clone = self.inner.clone();
         let cloned_layer = self.layer.clone();
