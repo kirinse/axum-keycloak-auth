@@ -73,9 +73,10 @@ where
         }
     }
 
-    #[instrument(skip(self), level=Level::INFO)]
+    #[instrument(name = "axum-keycloak-auth", skip_all, level=Level::INFO)]
     fn call(&mut self, mut request: Request<Body>) -> Self::Future {
         debug!("Validating request...");
+        debug!(request.authorization = ?request.headers().get("authorization"));
 
         let clone = self.inner.clone();
         let cloned_layer = self.layer.clone();
