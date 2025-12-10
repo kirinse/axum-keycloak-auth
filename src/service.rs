@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tracing::{Level, debug, instrument};
+use tracing::debug;
 
 #[derive(Clone)]
 pub struct KeycloakAuthService<S, R, Extra>
@@ -52,9 +52,9 @@ where
         let is_ready = self.layer.instance.discovery.version() > 0;
 
         if is_ready {
-            tracing::debug!("Ready to process requests.");
+            debug!("Ready to process requests.");
         } else {
-            tracing::debug!("Not ready to process requests. Waiting for initial discovery...");
+            debug!("Not ready to process requests. Waiting for initial discovery...");
 
             // We have to assume that the discovery action was initialized.
             // Our waker handling in would otherwise be wrong!
@@ -73,7 +73,6 @@ where
         }
     }
 
-    #[instrument(name = "axum-keycloak-auth", skip_all, level=Level::INFO)]
     fn call(&mut self, mut request: Request<Body>) -> Self::Future {
         debug!(name: "Validating request", authorization = ?request.headers().get("authorization"));
 
